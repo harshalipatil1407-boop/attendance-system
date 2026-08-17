@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Class Attendance System</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; }
+        body { background-color: #f4f7f6; padding: 15px; }
+        .card { background: white; max-width: 450px; margin: 10px auto; border-radius: 12px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { text-align: center; color: #2c3e50; margin-bottom: 15px; }
+        .tabs { display: flex; margin-bottom: 20px; }
+        .tab-btn { flex: 1; padding: 10px; border: none; background: #e0e0e0; font-weight: bold; cursor: pointer; }
+        .tab-btn.active { background: #3498db; color: white; border-radius: 6px; }
+        label { display: block; margin-top: 10px; font-weight: 600; color: #34495e; }
+        select, input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
+        button.action-btn { width: 100%; padding: 12px; background: #2ecc71; color: white; border: none; border-radius: 6px; font-size: 18px; margin-top: 18px; cursor: pointer; font-weight: bold; }
+        .code-box { text-align: center; font-size: 38px; font-weight: bold; color: #e74c3c; letter-spacing: 5px; margin: 15px 0; background: #f8d7da; padding: 10px; border-radius: 8px; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Smart Attendance Portal</h2>
+    
+    <div class="tabs">
+        <button class="tab-btn active" onclick="showTab('student')">Student Portal</button>
+        <button class="tab-btn" onclick="showTab('teacher')">Teacher Portal</button>
+    </div>
+
+    <!-- STUDENT SECTION -->
+    <div id="student-section">
+        <label>Class</label>
+        <select id="s_class">
+            <option>Class 11</option>
+            <option>Class 12</option>
+            <option>FY CS</option>
+        </select>
+
+        <label>Division</label>
+        <select id="s_div">
+            <option>Division A</option>
+            <option>Division B</option>
+        </select>
+
+        <label>Roll Number</label>
+        <input type="text" id="s_roll" placeholder="Enter Roll No (e.g. 101)">
+
+        <label>3-Digit Class Code</label>
+        <input type="number" id="s_code" placeholder="Enter Code from Board">
+
+        <button class="action-btn" onclick="submitAttendance()">Mark Present</button>
+    </div>
+
+    <!-- TEACHER SECTION -->
+    <div id="teacher-section" style="display:none;">
+        <label>Select Class</label>
+        <select id="t_class">
+            <option>Class 11</option>
+            <option>Class 12</option>
+            <option>FY CS</option>
+        </select>
+
+        <label>Select Division</label>
+        <select id="t_div">
+            <option>Division A</option>
+            <option>Division B</option>
+        </select>
+
+        <label>Select Subject</label>
+        <select id="t_sub">
+            <option>Mathematics</option>
+            <option>Physics</option>
+            <option>Chemistry</option>
+        </select>
+
+        <label>Select Period</label>
+        <select id="t_period">
+            <option>Period 1</option>
+            <option>Period 2</option>
+            <option>Period 3</option>
+        </select>
+
+        <button class="action-btn" style="background:#3498db;" onclick="generateCode()">Generate Class Code</button>
+
+        <div id="code-display" class="code-box">---</div>
+    </div>
+</div>
+
+<script>
+    function showTab(tab) {
+        document.getElementById('student-section').style.display = tab === 'student' ? 'block' : 'none';
+        document.getElementById('teacher-section').style.display = tab === 'teacher' ? 'block' : 'none';
+        document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', (i===0 && tab==='student') || (i===1 && tab==='teacher')));
+    }
+
+    function generateCode() {
+        if (!navigator.geolocation) return alert("Please enable GPS Location!");
+
+        navigator.geolocation.getCurrentPosition(pos => {
+            const formData = new FormData();
+            formData.append('class_name', document.getElementById('t_class').value);
+            formData.append('division', document.getElementById('t_div').value);
+            formData.append('subject', document.getElementById('t_sub').value);
+            formData.append('period', document.getElementById('t_period').value);
+            formData.append('latitude', pos.coords.latitude);
+            formData.append('longitude', pos.coords.longitude);
+
+            fetch('/generate_code', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(data => {
+                const box = document.getElementById('code-display');
+                box.innerText = data.code;
+                box.style.display = 'block';
+            });
+        }, () => alert("Location permission required for teacher to set Geofence!"));
+    }
+
+    function submitAttendance() {
+        if (!navigator.geolocation) return alert("Please enable GPS Location!");
+
+        navigator.geolocation.getCurrentPosition(pos => {
+            const formData = new FormData();
+            formData.append('class_name', document.getElementById('s_class').value);
+            formData.append('division', document.getElementById('s_div').value);
+            formData.append('roll_no', document.getElementById('s_roll').value);
+            formData.append('code', document.getElementById('s_code').value);
+            formData.append('latitude', pos.coords.latitude);
+            formData.append('longitude', pos.coords.longitude);
+
+            fetch('/mark_attendance', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(data => {
+                alert(data.message || data.reason);
+            });
+        }, () => alert("Location permission required to mark attendance."));
+    }
+</script>
+
+</body>
+</html>
