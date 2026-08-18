@@ -86,10 +86,13 @@ active_sessions = {}
 @app.route("/")
 def home():
     return render_template("index.html")
-
+TEACHER_PASSWORD = "smartyes7"
 @app.route("/generate_code", methods=["POST"])
 def generate_code():
     try:
+        entered_pass = request.form.get("password", "")
+        if entered_pass != TEACHER_PASSWORD:
+            return jsonify({"status": "Failed", "reason": "Incorrect Teacher Password! Access Denied."})
         raw_class = request.form.get("class_name", "")
         raw_div = request.form.get("division", "")
         
