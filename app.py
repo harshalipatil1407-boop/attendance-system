@@ -198,3 +198,78 @@ def mark_attendance():
             "status": "Failed",
             "reason": f"Server Error: {str(e)}"
         })
+
+@app.route("/view_attendance")
+def view_attendance():
+    try:
+        conn, db_type = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT date, time, class_name, division, subject, period, roll_no, status FROM attendance_logs ORDER BY id DESC")
+        logs = cursor.fetchall()
+        conn.close()
+
+        table_rows = ""
+        for row in logs:
+            table_rows += f"""
+            <tr>
+                <td>{row[0]}</td>
+                <td>{row[1]}</td>
+                <td>{row[2]}</td>
+                <td>{row[3]}</td>
+                <td>{row[4]}</td>
+                <td>{row[5]}</td>
+                <td><b>{row[6]}</b></td>
+                <td style="color: green; font-weight: bold;">{row[7]}</td>
+            </tr>
+            """
+
+        if not table_rows:
+            table_rows = "<tr><td colspan='8' style='text-align:center;'>No attendance records found yet.</td></tr>"
+
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Attendance Records</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{ font-family: Arial, sans-serif; background: #f4f6f9; padding: 20px; margin: 0; }}
+                .container {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 900px; margin: 0 auto; }}
+                h2 {{ text-align: center; color: #2c3e50; margin-bottom: 20px; }}
+                .table-responsive {{ overflow-x: auto; }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+                th, td {{ border: 1px solid #ddd; padding: 10px; text-align: center; }}
+                th {{ background-color: #3498db; color: white; }}
+                tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                .btn {{ display: inline-block; padding: 8px 15px; background: #2ecc71; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-bottom: 15px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>Live Attendance Records</h2>
+                <a href="/" class="btn">← Back to Portal</a>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Time</th>
+                                <th>Class</th>
+                                <th>Div</th>
+                                <th>Subject</th>
+                                <th>Period</th>
+                                <th>Roll No</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {table_rows}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+    except Exception as e:
+        return f"<h3>Error loading attendance logs: {str(e)}</h3>"
