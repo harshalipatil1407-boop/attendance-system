@@ -86,7 +86,7 @@ active_sessions = {}
 @app.route("/")
 def home():
     return render_template("index.html")
-TEACHER_PASSWORD = "smartyes7"
+TEACHER_PASSWORD = os.environ.get('TEACHER_PASSWORD')
 @app.route("/generate_code", methods=["POST"])
 def generate_code():
     try:
