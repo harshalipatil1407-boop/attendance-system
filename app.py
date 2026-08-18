@@ -4,155 +4,121 @@ import sqlite3
 from datetime import datetime
 from flask import Flask, jsonify, render_template, request
 
-app = Flask(__name__)
-DB_FILE = "attendance.db"
+# Try importing PostgreSQL adapter if available
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
 
+app = Flask(__name__)
+
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+def get_db_connection():
+    # Agar Render par DATABASE_URL set hai toh PostgreSQL use karo
+    if DATABASE_URL:
+        url = DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return psycopg2.connect(url)
+    else:
+        # Local system ke liye SQLite fallback
+        return sqlite3.connect("attendance.db")
 
 def init_db():
-  conn = sqlite3.connect(DB_FILE)
-  cursor = conn.cursor()
-  cursor.execute("""
-        CREATE TABLE IF NOT EXISTS attendance_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT,
-            time TEXT,
-            class_name TEXT,
-            division TEXT,
-            subject TEXT,
-            period TEXT,
-            roll_no TEXT,
-            status TEXT
-        )
-    """)
-  conn.commit()
-  conn.close()
-
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # PostgreSQL / SQLite dono ke liye standard query
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS attendance_logs (
+                id SERIAL PRIMARY KEY,
+                date TEXT,
+                time TEXT,
+                class_name TEXT,
+                division TEXT,
+                subject TEXT,
+                period TEXT,
+                roll_no TEXT,
+                status TEXT
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS attendance_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT,
+                time TEXT,
+                class_name TEXT,
+                division TEXT,
+                subject TEXT,
+                period TEXT,
+                roll_no TEXT,
+                status TEXT
+            )
+        """)
+    conn.commit()
+    conn.close()
 
 init_db()
 
 active_sessions = {}
 
-
 @app.route("/")
 def home():
-  return render_template("index.html")
-
+    return render_template("index.html")
 
 @app.route("/generate_code", methods=["POST"])
 def generate_code():
-  class_name = request.form.get("class_name")
-  division = request.form.get("division")
-  subject = request.form.get("subject")
-  period = request.form.get("period")
-  teacher_lat = float(request.form.get("latitude", 0))
-  teacher_lon = float(request.form.get("longitude", 0))
+    class_name = request.form.get("class_name")
+    division = request.form.get("division")
+    subject = request.form.get("subject")
+    period = request.form.get("period")
+    teacher_lat = float(request.form.get("latitude", 0))
+    teacher_lon = float(request.form.get("longitude", 0))
 
-  session_key = f"{class_name}_{division}"
-  code = str(random.randint(100, 999))
+    session_key = f"{class_name}_{division}"
+    code = str(random.randint(100, 999))
 
-  active_sessions[session_key] = {
-      "code": code,
-      "subject": subject,
-      "period": period,
-      "teacher_lat": teacher_lat,
-      "teacher_lon": teacher_lon,
-      "generated_at": datetime.now(),
-  }
+    active_sessions[session_key] = {
+        "code": code,
+        "subject": subject,
+        "period": period,
+        "teacher_lat": teacher_lat,
+        "teacher_lon": teacher_lon,
+        "generated_at": datetime.now(),
+    }
 
-  return jsonify({
-      "status": "Success",
-      "code": code,
-      "message": (
-          f"Code generated for {class_name} Div {division} - {subject}"
-          f" ({period})"
-      ),
-  })
-
-
-@app.route("/mark_attendance", methods=["POST"])
-def mark_attendance():
-  class_name = request.form.get("class_name")
-  division = request.form.get("division")
-  roll_no = request.form.get("roll_no")
-  entered_code = request.form.get("code")
-  user_lat = float(request.form.get("latitude", 0))
-  user_lon = float(request.form.get("longitude", 0))
-
-  session_key = f"{class_name}_{division}"
-
-  if session_key not in active_sessions:
     return jsonify({
-        "status": "Failed",
-        "reason": "No active class session found for your Class/Division!",
-    })
-
-  session_data = active_sessions[session_key]
-
-  if entered_code != session_data["code"]:
-    return jsonify(
-        {"status": "Failed", "reason": "Invalid or Expired Class Code!"}
-    )
-
-  # Dynamic GPS Check: Student vs Teacher Location (Max ~50 Meters)
-  lat_diff = abs(user_lat - session_data["teacher_lat"])
-  lon_diff = abs(user_lon - session_data["teacher_lon"])
-
-  if lat_diff > 0.05 or lon_diff > 0.05:
-    return jsonify({
-        "status": "Failed",
-        "reason": (
-            "Location Verification Failed! You are too far from the teacher."
+        "status": "Success",
+        "code": code,
+        "message": (
+            f"Code generated for {class_name} Div {division} - {subject}"
+            f" ({period})"
         ),
     })
 
-  curr_date = datetime.now().strftime("%Y-%m-%d")
-  curr_time = datetime.now().strftime("%I:%M:%S %p")
+@app.route("/mark_attendance", methods=["POST"])
+def mark_attendance():
+    class_name = request.form.get("class_name")
+    division = request.form.get("division")
+    roll_no = request.form.get("roll_no")
+    entered_code = request.form.get("code")
+    user_lat = float(request.form.get("latitude", 0))
+    user_lon = float(request.form.get("longitude", 0))
 
-  conn = sqlite3.connect(DB_FILE)
-  cursor = conn.cursor()
+    session_key = f"{class_name}_{division}"
 
-  cursor.execute(
-      """
-        SELECT id FROM attendance_logs 
-        WHERE date=? AND class_name=? AND division=? AND period=? AND roll_no=?
-    """,
-      (curr_date, class_name, division, session_data["period"], roll_no),
-  )
+    if session_key not in active_sessions:
+        return jsonify({
+            "status": "Failed",
+            "reason": "No active class session found for your Class/Division!",
+        })
 
-  if cursor.fetchone():
-    conn.close()
-    return jsonify(
-        {"status": "Failed", "reason": "Attendance already marked for today!"}
-    )
+    session_data = active_sessions[session_key]
 
-  cursor.execute(
-      """
-        INSERT INTO attendance_logs (date, time, class_name, division, subject, period, roll_no, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """,
-      (
-          curr_date,
-          curr_time,
-          class_name,
-          division,
-          session_data["subject"],
-          session_data["period"],
-          roll_no,
-          "Present",
-      ),
-  )
-
-  conn.commit()
-  conn.close()
-
-  return jsonify({
-      "status": "Success",
-      "message": (
-          f"Attendance Marked Successfully! [Roll No: {roll_no} |"
-          f" {session_data['subject']}]"
-      ),
-  })
-
-
-if __name__ == "__main__":
-  app.run(host="0.0.0.0", port=5000, debug=True)
+    if entered_code != session_data["code"]:
+        return jsonify(
+            {"status": "Failed", "reason": "Invalid or Expired Class Code!"}
+        )
