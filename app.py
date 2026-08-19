@@ -3,6 +3,7 @@ import time
 import random
 import csv
 import io
+import math
 from flask import Flask, render_template, request, jsonify, send_file
 import psycopg2
 
@@ -13,6 +14,21 @@ TEACHER_PASSWORD = os.environ.get('TEACHER_PASSWORD', 'smartyes7')
 
 # Concurrent Multi-Teacher Active Sessions
 active_sessions = {}
+
+# Distance Calculation (Haversine Formula) in Meters
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371000  # Earth radius in meters
+    phi1 = math.radians(float(lat1))
+    phi2 = math.radians(float(lat2))
+    delta_phi = math.radians(float(lat2) - float(lat1))
+    delta_lambda = math.radians(float(lon2) - float(lon1))
+
+    a = math.sin(delta_phi / 2.0)**2 + \
+        math.cos(phi1) * math.cos(phi2) * \
+        math.sin(delta_lambda / 2.0)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c
 
 def get_db_connection():
     database_url = os.environ.get('DATABASE_URL')
@@ -70,7 +86,8 @@ def home():
                     query += " AND subject ILIKE %s"
                     params.append(f"%{filter_subject}%")
 
-                query += " ORDER BY timestamp DESC"
+                # Roll Number Wise Sorting
+                query += " ORDER BY roll_no ASC"
 
                 cursor.execute(query, tuple(params))
                 records = cursor.fetchall()
@@ -88,13 +105,17 @@ def generate_code():
     password = request.form.get("password")
     selected_class = request.form.get("selected_class")
     subject = request.form.get("subject")
+    lat = request.form.get("latitude")
+    lon = request.form.get("longitude")
 
     if password == TEACHER_PASSWORD:
         code = str(random.randint(100, 999))
         active_sessions[code] = {
             "class": selected_class,
             "subject": subject,
-            "created_at": time.time()
+            "created_at": time.time(),
+            "latitude": lat,
+            "longitude": lon
         }
         return jsonify({"status": "success", "code": code, "class": selected_class, "subject": subject})
     else:
@@ -105,15 +126,24 @@ def mark_attendance():
     code = request.form.get("code")
     roll_no = request.form.get("roll_no")
     student_name = request.form.get("student_name")
+    student_lat = request.form.get("latitude")
+    student_lon = request.form.get("longitude")
 
     if code not in active_sessions:
         return jsonify({"status": "error", "message": "Invalid or Expired Code!"}), 400
 
     session_info = active_sessions[code]
 
+    # Time Expiry Check (3 Minutes)
     if time.time() - session_info["created_at"] > 180:
         del active_sessions[code]
         return jsonify({"status": "error", "message": "Code Expired!"}), 400
+
+    # GPS Location Verification (100m Range Limit)
+    if session_info.get("latitude") and student_lat:
+        distance = calculate_distance(session_info["latitude"], session_info["longitude"], student_lat, student_lon)
+        if distance > 100:
+            return jsonify({"status": "error", "message": f"You are outside the classroom area! ({int(distance)}m away)"}), 400
 
     try:
         conn = get_db_connection()
@@ -125,7 +155,7 @@ def mark_attendance():
         conn.commit()
         cursor.close()
         conn.close()
-        return jsonify({"status": "success", "message": "Attendance Marked!"})
+        return jsonify({"status": "success", "message": "Attendance Marked Successfully!"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -155,7 +185,7 @@ def download_excel():
         query += " AND subject ILIKE %s"
         params.append(f"%{filter_subject}%")
 
-    query += " ORDER BY timestamp DESC"
+    query += " ORDER BY roll_no ASC"
 
     cursor.execute(query, tuple(params))
     records = cursor.fetchall()
