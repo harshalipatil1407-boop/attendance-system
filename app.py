@@ -9,13 +9,9 @@ import psycopg2
 
 app = Flask(__name__)
 
-# Password from Render Environment Variables
 TEACHER_PASSWORD = os.environ.get('TEACHER_PASSWORD', 'smartyes7')
-
-# Concurrent Multi-Teacher Active Sessions
 active_sessions = {}
 
-# Distance Calculation (Haversine Formula) in Meters
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371000  # Earth radius in meters
     phi1 = math.radians(float(lat1))
@@ -55,50 +51,54 @@ def init_db():
     except Exception as e:
         print("DB Init Error:", e)
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/', methods=['GET'])
 def home():
     init_db()
-    records = []
-    teacher_logged_in = False
-    
-    filter_date = request.form.get("filter_date")
-    filter_class = request.form.get("filter_class")
-    filter_subject = request.form.get("filter_subject")
-    teacher_pass = request.form.get("view_password")
+    return render_template("index.html")
 
-    if request.method == 'POST' and teacher_pass:
-        if teacher_pass == TEACHER_PASSWORD:
-            teacher_logged_in = True
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
+@app.route("/get_live_records", methods=["GET"])
+def get_live_records():
+    filter_date = request.args.get("filter_date")
+    filter_class = request.args.get("filter_class")
+    filter_subject = request.args.get("filter_subject")
 
-                query = "SELECT roll_no, student_name, student_class, subject, timestamp FROM attendance WHERE 1=1"
-                params = []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-                if filter_date:
-                    query += " AND DATE(timestamp) = %s"
-                    params.append(filter_date)
-                if filter_class:
-                    query += " AND student_class = %s"
-                    params.append(filter_class)
-                if filter_subject:
-                    query += " AND subject ILIKE %s"
-                    params.append(f"%{filter_subject}%")
+        query = "SELECT roll_no, student_name, student_class, subject, timestamp FROM attendance WHERE 1=1"
+        params = []
 
-                # Roll Number Wise Sorting
-                query += " ORDER BY roll_no ASC"
+        if filter_date:
+            query += " AND DATE(timestamp) = %s"
+            params.append(filter_date)
+        if filter_class:
+            query += " AND student_class = %s"
+            params.append(filter_class)
+        if filter_subject:
+            query += " AND subject ILIKE %s"
+            params.append(f"%{filter_subject}%")
 
-                cursor.execute(query, tuple(params))
-                records = cursor.fetchall()
-                cursor.close()
-                conn.close()
-            except Exception as e:
-                print("Error fetching records:", e)
-        else:
-            return render_template("index.html", error="Incorrect Password!")
+        query += " ORDER BY roll_no ASC"
 
-    return render_template("index.html", records=records, teacher_logged_in=teacher_logged_in)
+        cursor.execute(query, tuple(params))
+        records = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        formatted_records = []
+        for r in records:
+            formatted_records.append({
+                "roll_no": r[0],
+                "student_name": r[1],
+                "student_class": r[2],
+                "subject": r[3],
+                "timestamp": str(r[4])
+            })
+            
+        return jsonify({"status": "success", "records": formatted_records})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/generate_code", methods=["POST"])
 def generate_code():
@@ -134,16 +134,14 @@ def mark_attendance():
 
     session_info = active_sessions[code]
 
-    # Time Expiry Check (3 Minutes)
     if time.time() - session_info["created_at"] > 180:
         del active_sessions[code]
         return jsonify({"status": "error", "message": "Code Expired!"}), 400
 
-    # GPS Location Verification (100m Range Limit)
     if session_info.get("latitude") and student_lat:
         distance = calculate_distance(session_info["latitude"], session_info["longitude"], student_lat, student_lon)
         if distance > 100:
-            return jsonify({"status": "error", "message": f"You are outside the classroom area! ({int(distance)}m away)"}), 400
+            return jsonify({"status": "error", "message": f"You are too far from classroom! ({int(distance)}m away)"}), 400
 
     try:
         conn = get_db_connection()
@@ -155,16 +153,12 @@ def mark_attendance():
         conn.commit()
         cursor.close()
         conn.close()
-        return jsonify({"status": "success", "message": "Attendance Marked Successfully!"})
+        return jsonify({"status": "success", "message": "Attendance lag gayi!"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/download_excel", methods=["POST"])
 def download_excel():
-    password = request.form.get("excel_password")
-    if password != TEACHER_PASSWORD:
-        return "Unauthorized Access", 401
-
     filter_date = request.form.get("filter_date")
     filter_class = request.form.get("filter_class")
     filter_subject = request.form.get("filter_subject")
