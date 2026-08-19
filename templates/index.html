@@ -107,14 +107,14 @@
 
             <div class="mb-3">
                 <label class="form-label">3-Digit Attendance Code:</label>
-                <input type="text" name="code" class="form-control" placeholder="Enter Code Shared by Teacher" required>
+                <input type="text" name="code" id="studentCodeInput" class="form-control" placeholder="Enter Code Shared by Teacher" required>
             </div>
 
             <button type="submit" class="btn btn-success btn-lg w-100">Submit Attendance</button>
         </form>
     </div>
 
-    <!-- 3. Live View Attendance Records (No Password Required) -->
+    <!-- 3. View Attendance Records -->
     <div class="card shadow p-4 border-0 rounded-3">
         <h4 class="card-title text-dark mb-3">3. View Attendance Records (Live)</h4>
         
@@ -205,7 +205,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     fetchRecords();
-    setInterval(fetchRecords, 3000); // Live Auto Refresh every 3 seconds
+    setInterval(fetchRecords, 3000);
 });
 
 function showCodeUI(code, className, subject) {
@@ -295,10 +295,10 @@ document.getElementById('generateCodeForm').addEventListener('submit', function(
 document.getElementById('markAttendanceForm').addEventListener('submit', function(e) {
     e.preventDefault();
     const form = this;
+    const codeEntered = document.getElementById('studentCodeInput').value.trim();
 
-    // Device lock check (1 Mobile = 1 Student)
-    if (localStorage.getItem("attendanceMarkedToday") === "true") {
-        alert("Attendance already submitted from this device!");
+    if (localStorage.getItem("markedCode_" + codeEntered) === "true") {
+        alert("Attendance already submitted for this lecture from this device!");
         return;
     }
 
@@ -309,9 +309,9 @@ document.getElementById('markAttendanceForm').addEventListener('submit', functio
         const response = await fetch('/mark_attendance', { method: 'POST', body: formData });
         const result = await response.json();
         
-        alert(result.message); // Displays "Attendance lag gayi!"
+        alert(result.message);
         if(result.status === 'success') {
-            localStorage.setItem("attendanceMarkedToday", "true");
+            localStorage.setItem("markedCode_" + codeEntered, "true");
             form.reset();
             fetchRecords();
         }
