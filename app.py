@@ -138,10 +138,15 @@ def mark_attendance():
         del active_sessions[code]
         return jsonify({"status": "error", "message": "Code Expired!"}), 400
 
+    distance_msg = ""
     if session_info.get("latitude") and student_lat:
         distance = calculate_distance(session_info["latitude"], session_info["longitude"], student_lat, student_lon)
-        if distance > 100:
-            return jsonify({"status": "error", "message": f"You are too far from classroom! ({int(distance)}m away)"}), 400
+        dist_in_meters = int(distance)
+        
+        if dist_in_meters > 100:
+            return jsonify({"status": "error", "message": f"Aap classroom se bahar hain! ({dist_in_meters}m door)"}), 400
+        
+        distance_msg = f" (Aap classroom se {dist_in_meters}m ke area mein hain)"
 
     try:
         conn = get_db_connection()
@@ -153,7 +158,8 @@ def mark_attendance():
         conn.commit()
         cursor.close()
         conn.close()
-        return jsonify({"status": "success", "message": "Attendance lag gayi!"})
+        
+        return jsonify({"status": "success", "message": f"Attendance lag gayi!{distance_msg}"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
