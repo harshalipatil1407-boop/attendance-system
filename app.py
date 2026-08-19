@@ -1,278 +1,182 @@
 import os
-import re
+import time
 import random
-import sqlite3
-from math import radians, cos, sin, asin, sqrt
-from datetime import datetime
-from flask import Flask, jsonify, render_template, request
-
-try:
-    import psycopg2
-except ImportError:
-    psycopg2 = None
+import csv
+import io
+from flask import Flask, render_template, request, jsonify, send_file
+import psycopg2
 
 app = Flask(__name__)
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
+# Render Environment Variables se password fetch
+TEACHER_PASSWORD = os.environ.get('TEACHER_PASSWORD', 'smartyes7')
 
-def clean_input(text):
-    if not text:
-        return ""
-    cleaned = re.sub(r'(?i)class|division', '', str(text)).strip().upper()
-    return cleaned if cleaned else str(text).strip().upper()
-
-# Distance calculation (Haversine Formula) in meters
-def calculate_distance(lat1, lon1, lat2, lon2):
-    try:
-        r = 6371000  # Radius of Earth in meters
-        lat1, lon1, lat2, lon2 = map(radians, [float(lat1), float(lon1), float(float(lat2)), float(lon2)])
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
-        return r * 2 * asin(sqrt(a))
-    except Exception:
-        return 0
-
-def get_db_connection():
-    if DATABASE_URL and psycopg2:
-        try:
-            url = DATABASE_URL
-            if url.startswith("postgres://"):
-                url = url.replace("postgres://", "postgresql://", 1)
-            return psycopg2.connect(url), "postgres"
-        except Exception:
-            return sqlite3.connect("attendance.db"), "sqlite"
-    else:
-        return sqlite3.connect("attendance.db"), "sqlite"
-
-def init_db():
-    conn, db_type = get_db_connection()
-    cursor = conn.cursor()
-    if db_type == "postgres":
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS attendance_logs (
-                id SERIAL PRIMARY KEY,
-                date TEXT,
-                time TEXT,
-                class_name TEXT,
-                division TEXT,
-                subject TEXT,
-                period TEXT,
-                roll_no TEXT,
-                status TEXT
-            )
-        """)
-    else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS attendance_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT,
-                time TEXT,
-                class_name TEXT,
-                division TEXT,
-                subject TEXT,
-                period TEXT,
-                roll_no TEXT,
-                status TEXT
-            )
-        """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
+# Active sessions store karne ke liye dictionary
 active_sessions = {}
 
-@app.route("/")
+def get_db_connection():
+    database_url = os.environ.get('DATABASE_URL')
+    conn = psycopg2.connect(database_url)
+    return conn
+
+def init_db():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS attendance (
+                id SERIAL PRIMARY KEY,
+                roll_no TEXT,
+                student_name TEXT,
+                student_class TEXT,
+                subject TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print("DB Init Error:", e)
+
+@app.route('/', methods=['GET', 'POST'])
 def home():
-    return render_template("index.html")
-TEACHER_PASSWORD = os.environ.get('TEACHER_PASSWORD')
+    init_db()
+    records = []
+    teacher_logged_in = False
+    
+    filter_date = request.form.get("filter_date")
+    filter_class = request.form.get("filter_class")
+    filter_subject = request.form.get("filter_subject")
+    teacher_pass = request.form.get("view_password")
+
+    if request.method == 'POST' and teacher_pass:
+        if teacher_pass == TEACHER_PASSWORD:
+            teacher_logged_in = True
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+
+                query = "SELECT roll_no, student_name, student_class, subject, timestamp FROM attendance WHERE 1=1"
+                params = []
+
+                if filter_date:
+                    query += " AND DATE(timestamp) = %s"
+                    params.append(filter_date)
+                if filter_class:
+                    query += " AND student_class = %s"
+                    params.append(filter_class)
+                if filter_subject:
+                    query += " AND subject ILIKE %s"
+                    params.append(f"%{filter_subject}%")
+
+                query += " ORDER BY timestamp DESC"
+
+                cursor.execute(query, tuple(params))
+                records = cursor.fetchall()
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                print("Error fetching records:", e)
+        else:
+            return render_template("index.html", error="Incorrect Password!")
+
+    return render_template("index.html", records=records, teacher_logged_in=teacher_logged_in)
+
 @app.route("/generate_code", methods=["POST"])
 def generate_code():
-    try:
-        entered_pass = request.form.get("password", "")
-        if entered_pass != TEACHER_PASSWORD:
-            return jsonify({"status": "Failed", "reason": "Incorrect Teacher Password! Access Denied."})
-        raw_class = request.form.get("class_name", "")
-        raw_div = request.form.get("division", "")
-        
-        class_name = clean_input(raw_class)
-        division = clean_input(raw_div)
-        subject = str(request.form.get("subject", "")).strip()
-        period = str(request.form.get("period", "")).strip()
-        lat = request.form.get("latitude", 0)
-        lon = request.form.get("longitude", 0)
+    password = request.form.get("password")
+    selected_class = request.form.get("selected_class")
+    subject = request.form.get("subject")
 
-        session_key = f"{class_name}_{division}"
+    if password == TEACHER_PASSWORD:
         code = str(random.randint(100, 999))
-
-        active_sessions[session_key] = {
-            "code": code,
+        active_sessions[code] = {
+            "class": selected_class,
             "subject": subject,
-            "period": period,
-            "lat": lat,
-            "lon": lon,
-            "generated_at": datetime.now(),
+            "created_at": time.time()
         }
-
-        return jsonify({
-            "status": "Success",
-            "code": code,
-            "message": f"Code generated for {raw_class} {raw_div}"
-        })
-    except Exception as e:
-        return jsonify({"status": "Failed", "reason": f"Teacher Error: {str(e)}"})
+        return jsonify({"status": "success", "code": code, "class": selected_class, "subject": subject})
+    else:
+        return jsonify({"status": "error", "message": "Incorrect Teacher Password!"}), 401
 
 @app.route("/mark_attendance", methods=["POST"])
 def mark_attendance():
+    code = request.form.get("code")
+    roll_no = request.form.get("roll_no")
+    student_name = request.form.get("student_name")
+
+    if code not in active_sessions:
+        return jsonify({"status": "error", "message": "Invalid or Expired Code!"}), 400
+
+    session_info = active_sessions[code]
+
+    if time.time() - session_info["created_at"] > 180:
+        del active_sessions[code]
+        return jsonify({"status": "error", "message": "Code Expired!"}), 400
+
     try:
-        raw_class = request.form.get("class_name", "")
-        raw_div = request.form.get("division", "")
-        
-        class_name = clean_input(raw_class)
-        division = clean_input(raw_div)
-        roll_no = str(request.form.get("roll_no", "")).strip()
-        entered_code = str(request.form.get("code", "")).strip()
-        user_lat = request.form.get("latitude", 0)
-        user_lon = request.form.get("longitude", 0)
-
-        session_key = f"{class_name}_{division}"
-
-        # 1. Active Session Check
-        if session_key not in active_sessions:
-            return jsonify({
-                "status": "Failed",
-                "reason": f"No active session found for '{raw_class}' '{raw_div}'! Code generate karne ke baad hi attendance mark karein."
-            })
-
-        session_data = active_sessions[session_key]
-
-        # 2. Code Verification Check
-        if entered_code != session_data["code"]:
-            return jsonify({
-                "status": "Failed",
-                "reason": f"Invalid Code! Correct code is: {session_data['code']}"
-            })
-
-        # 3. Location / Distance Verification Check (50 Meters Radius)
-        if session_data["lat"] != 0 and user_lat != 0:
-            dist = calculate_distance(session_data["lat"], session_data["lon"], user_lat, user_lon)
-            if dist > 50:  # Allow max 50 meters distance
-                return jsonify({
-                    "status": "Failed",
-                    "reason": f"You are out of classroom range! (Distance: {int(dist)}m)"
-                })
-
-        # 4. Save to Database
-        now = datetime.now()
-        current_date = now.strftime("%Y-%m-%d")
-        current_time = now.strftime("%H:%M:%S")
-
-        conn, db_type = get_db_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
-
-        if db_type == "postgres":
-            cursor.execute("""
-                INSERT INTO attendance_logs (date, time, class_name, division, subject, period, roll_no, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                current_date, current_time, class_name, division,
-                session_data["subject"], session_data["period"], roll_no, "Present"
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO attendance_logs (date, time, class_name, division, subject, period, roll_no, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                current_date, current_time, class_name, division,
-                session_data["subject"], session_data["period"], roll_no, "Present"
-            ))
-
+        cursor.execute('''
+            INSERT INTO attendance (roll_no, student_name, student_class, subject)
+            VALUES (%s, %s, %s, %s)
+        ''', (roll_no, student_name, session_info["class"], session_info["subject"]))
         conn.commit()
+        cursor.close()
         conn.close()
-
-        return jsonify({
-            "status": "Success",
-            "message": f"Attendance Marked Successfully for Roll No {roll_no}!"
-        })
-
+        return jsonify({"status": "success", "message": "Attendance Marked!"})
     except Exception as e:
-        return jsonify({
-            "status": "Failed",
-            "reason": f"Server Error: {str(e)}"
-        })
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route("/view_attendance")
-def view_attendance():
-    try:
-        conn, db_type = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT date, time, class_name, division, subject, period, roll_no, status FROM attendance_logs ORDER BY id DESC")
-        logs = cursor.fetchall()
-        conn.close()
+@app.route("/download_excel", methods=["POST"])
+def download_excel():
+    password = request.form.get("excel_password")
+    if password != TEACHER_PASSWORD:
+        return "Unauthorized Access", 401
 
-        table_rows = ""
-        for row in logs:
-            table_rows += f"""
-            <tr>
-                <td>{row[0]}</td>
-                <td>{row[1]}</td>
-                <td>{row[2]}</td>
-                <td>{row[3]}</td>
-                <td>{row[4]}</td>
-                <td>{row[5]}</td>
-                <td><b>{row[6]}</b></td>
-                <td style="color: green; font-weight: bold;">{row[7]}</td>
-            </tr>
-            """
+    filter_date = request.form.get("filter_date")
+    filter_class = request.form.get("filter_class")
+    filter_subject = request.form.get("filter_subject")
 
-        if not table_rows:
-            table_rows = "<tr><td colspan='8' style='text-align:center;'>No attendance records found yet.</td></tr>"
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Attendance Records</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                body {{ font-family: Arial, sans-serif; background: #f4f6f9; padding: 20px; margin: 0; }}
-                .container {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 900px; margin: 0 auto; }}
-                h2 {{ text-align: center; color: #2c3e50; margin-bottom: 20px; }}
-                .table-responsive {{ overflow-x: auto; }}
-                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-                th, td {{ border: 1px solid #ddd; padding: 10px; text-align: center; }}
-                th {{ background-color: #3498db; color: white; }}
-                tr:nth-child(even) {{ background-color: #f9f9f9; }}
-                .btn {{ display: inline-block; padding: 8px 15px; background: #2ecc71; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-bottom: 15px; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>Live Attendance Records</h2>
-                <a href="/" class="btn">← Back to Portal</a>
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Time</th>
-                                <th>Class</th>
-                                <th>Div</th>
-                                <th>Subject</th>
-                                <th>Period</th>
-                                <th>Roll No</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {table_rows}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-    except Exception as e:
-        return f"<h3>Error loading attendance logs: {str(e)}</h3>"
+    query = "SELECT roll_no, student_name, student_class, subject, timestamp FROM attendance WHERE 1=1"
+    params = []
+
+    if filter_date:
+        query += " AND DATE(timestamp) = %s"
+        params.append(filter_date)
+    if filter_class:
+        query += " AND student_class = %s"
+        params.append(filter_class)
+    if filter_subject:
+        query += " AND subject ILIKE %s"
+        params.append(f"%{filter_subject}%")
+
+    query += " ORDER BY timestamp DESC"
+
+    cursor.execute(query, tuple(params))
+    records = cursor.fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Roll No', 'Student Name', 'Class', 'Subject', 'Date & Time'])
+
+    for row in records:
+        writer.writerow(row)
+
+    output.seek(0)
+    cursor.close()
+    conn.close()
+
+    return send_file(
+        io.BytesIO(output.getvalue().encode('utf-8')),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="Attendance_Report.csv"
+    )
+
+if __name__ == '__main__':
+    app.run(debug=True)
