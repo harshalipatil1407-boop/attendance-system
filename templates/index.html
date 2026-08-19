@@ -64,6 +64,9 @@
     <div class="card shadow p-4 mb-4 border-0 rounded-3">
         <h4 class="card-title text-primary mb-3">1. Teacher Panel - Generate Code</h4>
         <form id="generateCodeForm">
+            <input type="hidden" name="latitude" id="teacherLat">
+            <input type="hidden" name="longitude" id="teacherLon">
+
             <div class="mb-3">
                 <label class="form-label fw-bold">Teacher Password:</label>
                 <input type="password" name="password" class="form-control" placeholder="Enter Password" required>
@@ -71,22 +74,23 @@
 
             <div class="mb-3">
                 <label class="form-label fw-bold">Select Class:</label>
-                <input class="form-control" list="classOptions" name="selected_class" placeholder="Type to search Class (e.g. TY AIML)..." required>
+                <input class="form-control" list="classOptions" name="selected_class" placeholder="Type to search Class..." required>
             </div>
 
             <div class="mb-3">
                 <label class="form-label fw-bold">Select Subject:</label>
-                <input class="form-control" list="subjectOptions" name="subject" placeholder="Type to search Subject (e.g. DBMS)..." required>
+                <input class="form-control" list="subjectOptions" name="subject" placeholder="Type to search Subject..." required>
             </div>
 
             <button type="submit" class="btn btn-primary btn-lg w-100">Generate Attendance Code</button>
         </form>
 
-        <!-- Dynamic Code Display Box -->
+        <!-- Persistent Code Display Box -->
         <div id="codeDisplay" class="alert alert-success mt-4 text-center d-none" role="alert">
             <h5 class="mb-1">Active Attendance Code</h5>
             <h1 class="display-2 fw-bold text-success my-2" id="generatedCode">---</h1>
-            <p class="mb-0 fs-5" id="codeDetails"></p>
+            <p class="mb-2 fs-5" id="codeDetails"></p>
+            <button onclick="clearActiveCode()" class="btn btn-outline-danger btn-sm">Clear / Reset Code</button>
         </div>
     </div>
 
@@ -94,6 +98,9 @@
     <div class="card shadow p-4 mb-4 border-0 rounded-3">
         <h4 class="card-title text-success mb-3">2. Student Panel - Mark Attendance</h4>
         <form id="markAttendanceForm">
+            <input type="hidden" name="latitude" id="studentLat">
+            <input type="hidden" name="longitude" id="studentLon">
+
             <div class="mb-3">
                 <label class="form-label">Roll Number:</label>
                 <input type="text" name="roll_no" class="form-control" placeholder="Enter Roll No" required>
@@ -129,18 +136,18 @@
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">Filter Class:</label>
-                    <input class="form-control" list="classOptions" name="filter_class" placeholder="Search Class...">
+                    <input class="form-control" list="classOptions" id="filterClassInput" name="filter_class" placeholder="Search Class...">
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">Filter Subject:</label>
-                    <input class="form-control" list="subjectOptions" name="filter_subject" placeholder="Search Subject...">
+                    <input class="form-control" list="subjectOptions" id="filterSubjectInput" name="filter_subject" placeholder="Search Subject...">
                 </div>
             </div>
             <button type="submit" class="btn btn-dark w-100 mt-3">View Attendance Records</button>
         </form>
 
         {% if teacher_logged_in %}
-            <!-- Total Count Badge & Export Button -->
+            <!-- Total Count & Export CSV -->
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <div class="alert alert-info mb-0 py-2 px-3 fw-bold">
                     📊 Total Present Students: <span class="badge bg-primary fs-6">{{ records|length }}</span>
@@ -159,7 +166,7 @@
                 <table class="table table-striped table-bordered mb-0">
                     <thead class="table-dark">
                         <tr>
-                            <th>Roll No</th>
+                            <th>Roll No ⬇️</th>
                             <th>Student Name</th>
                             <th>Class</th>
                             <th>Subject</th>
@@ -170,7 +177,7 @@
                         {% if records %}
                             {% for row in records %}
                             <tr>
-                                <td>{{ row[0] }}</td>
+                                <td class="fw-bold">{{ row[0] }}</td>
                                 <td>{{ row[1] }}</td>
                                 <td>{{ row[2] }}</td>
                                 <td>{{ row[3] }}</td>
@@ -190,44 +197,100 @@
 
 </div>
 
-<!-- Client Scripts -->
+<!-- Client & Location Scripts -->
 <script>
-// Code Generation Handler
-document.getElementById('generateCodeForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    const formData = new FormData(this);
-    
-    const response = await fetch('/generate_code', {
-        method: 'POST',
-        body: formData
-    });
-    
-    const result = await response.json();
-    
-    if (result.status === 'success') {
-        document.getElementById('generatedCode').innerText = result.code;
-        document.getElementById('codeDetails').innerText = `Class: ${result.class} | Subject: ${result.subject}`;
-        document.getElementById('codeDisplay').classList.remove('d-none');
+// Get Location Function
+function getLocation(latInputId, lonInputId, callback) {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                document.getElementById(latInputId).value = position.coords.latitude;
+                document.getElementById(lonInputId).value = position.coords.longitude;
+                if(callback) callback(true);
+            },
+            (error) => {
+                alert("Please enable GPS/Location permission in your browser to proceed!");
+                if(callback) callback(false);
+            },
+            { enableHighAccuracy: true }
+        );
     } else {
-        alert(result.message || 'Incorrect Teacher Password!');
+        alert("Geolocation is not supported by your browser.");
+        if(callback) callback(false);
+    }
+}
+
+// Auto Load Saved Active Session and Request Initial Location
+document.addEventListener("DOMContentLoaded", function() {
+    getLocation('teacherLat', 'teacherLon');
+    getLocation('studentLat', 'studentLon');
+
+    const savedCode = localStorage.getItem("activeCode");
+    const savedClass = localStorage.getItem("activeClass");
+    const savedSubject = localStorage.getItem("activeSubject");
+
+    if (savedCode) {
+        showCodeUI(savedCode, savedClass, savedSubject);
     }
 });
 
-// Student Attendance Handler
-document.getElementById('markAttendanceForm').addEventListener('submit', async function(e) {
+function showCodeUI(code, className, subject) {
+    document.getElementById('generatedCode').innerText = code;
+    document.getElementById('codeDetails').innerText = `Class: ${className} | Subject: ${subject}`;
+    document.getElementById('codeDisplay').classList.remove('d-none');
+
+    document.getElementById('filterClassInput').value = className;
+    document.getElementById('filterSubjectInput').value = subject;
+}
+
+function clearActiveCode() {
+    localStorage.removeItem("activeCode");
+    localStorage.removeItem("activeClass");
+    localStorage.removeItem("activeSubject");
+    document.getElementById('codeDisplay').classList.add('d-none');
+}
+
+// Teacher Code Generation Form Submission
+document.getElementById('generateCodeForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    const formData = new FormData(this);
+    const form = this;
     
-    const response = await fetch('/mark_attendance', {
-        method: 'POST',
-        body: formData
+    getLocation('teacherLat', 'teacherLon', async function(success) {
+        if(!success) return;
+        
+        const formData = new FormData(form);
+        const response = await fetch('/generate_code', { method: 'POST', body: formData });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            localStorage.setItem("activeCode", result.code);
+            localStorage.setItem("activeClass", result.class);
+            localStorage.setItem("activeSubject", result.subject);
+
+            showCodeUI(result.code, result.class, result.subject);
+        } else {
+            alert(result.message || 'Incorrect Teacher Password!');
+        }
     });
-    
-    const result = await response.json();
-    alert(result.message);
-    if(result.status === 'success') {
-        this.reset();
-    }
+});
+
+// Student Attendance Form Submission
+document.getElementById('markAttendanceForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const form = this;
+
+    getLocation('studentLat', 'studentLon', async function(success) {
+        if(!success) return;
+
+        const formData = new FormData(form);
+        const response = await fetch('/mark_attendance', { method: 'POST', body: formData });
+        const result = await response.json();
+        
+        alert(result.message);
+        if(result.status === 'success') {
+            form.reset();
+        }
+    });
 });
 </script>
 
