@@ -8,10 +8,10 @@ import psycopg2
 
 app = Flask(__name__)
 
-# Render Environment Variables se password fetch
+# Password from Render Environment Variables
 TEACHER_PASSWORD = os.environ.get('TEACHER_PASSWORD', 'smartyes7')
 
-# Active sessions store karne ke liye dictionary
+# Concurrent Multi-Teacher Active Sessions
 active_sessions = {}
 
 def get_db_connection():
@@ -175,7 +175,7 @@ def download_excel():
         io.BytesIO(output.getvalue().encode('utf-8')),
         mimetype="text/csv",
         as_attachment=True,
-        download_name="Attendance_Report.csv"
+        download_name="SmartYes_Attendance_Report.csv"
     )
 
 if __name__ == '__main__':
